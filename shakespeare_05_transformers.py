@@ -3,21 +3,25 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 # hyperparameters
-batch_size = 32
-block_size = 8
-max_iters = 3000
-eval_interval = 300
-lr = 1e-3
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+batch_size = 128
+block_size = 64
+max_iters = 5000
+eval_interval = 250
+lr = 3e-4
+device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+print(device)
 eval_iters = 200
-n_embd = 32
+n_embd = 120 # 384/6 = 64
+n_layers = 6
+n_heads = 6
+dropout = 0.2
 #-------------------
 
 # set seed
 torch.manual_seed(0)
 
 # load data
-path = 'code/pytorch/birds/'
+path = '/Users/rcasado/Desktop/Rodrigo_work/Universidad/PhD/Other/Coding/vscode/code/pytorch/birds/'
 input = ['shakespeare.txt', 'DonQuixote.txt', 'ExemplaryNovels.txt']
 with open(path + input[0], 'r', encoding='utf-8') as f:
     text = f.read()
@@ -55,7 +59,7 @@ def estimate_loss(model):
         losses = torch.zeros(eval_iters)
         for i in range(eval_iters):
             x, y = get_batch(split)
-            logits, loss = model(x, y)
+            _, loss = model(x, y)
             losses[i] = loss
         out[split] = losses.mean().item()
     return out
@@ -68,6 +72,7 @@ class Head(nn.Module):
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
         B, T, C = x.size()
@@ -77,6 +82,7 @@ class Head(nn.Module):
         attn = (Q @ K.transpose(-2, -1)) / C**0.5
         attn = attn.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
         x = attn @ V
         return x
     
@@ -85,19 +91,51 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, n_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(n_heads)])
-        # self.linear = nn.Linear(n_heads*head_size, n_embd)
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
         x = torch.cat([h(x) for h in self.heads], dim=-1)
-        # x = self.linear(x)
+        x = self.proj(x)
+        x = self.dropout(x)
         return x
+    
+class Block(nn.Module):
+    """Transformer block."""
+    def __init__(self, n_embd, n_heads):
+        super().__init__()
+        head_size = n_embd // n_heads
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+        self.mha = MultiHeadAttention(n_heads, head_size)
+        self.ff = FeedForward(n_embd)
+        
+    def forward(self, x):
+        x = x + self.mha(self.ln1(x))
+        x = x + self.ff(self.ln2(x))
+        return x
+    
+class FeedForward(nn.Module):
+    """Feed-forward network."""
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4*n_embd),
+            nn.ReLU(),
+            nn.Linear(4*n_embd, n_embd),
+            nn.Dropout(dropout)
+        )
+        
+    def forward(self, x):
+        return self.net(x)
 
 class LanguageModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.token_embedding = nn.Embedding(vocab_length, n_embd)
         self.positional_embedding = nn.Embedding(block_size, n_embd)
-        self.sa_heads = MultiHeadAttention(4, n_embd//4)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_heads=n_heads) for _ in range(n_layers)])
+        self.ln_f = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_length)
         
     def forward(self, x, targets=None):
@@ -105,7 +143,8 @@ class LanguageModel(nn.Module):
         tok_embd = self.token_embedding(x)
         pos_embd = self.positional_embedding(torch.arange(T, device=x.device))
         x = tok_embd + pos_embd
-        x = self.sa_heads(x)
+        x = self.blocks(x)
+        x = self.ln_f(x)
         logits = self.lm_head(x)
 
         if targets is not None:
@@ -150,4 +189,4 @@ for i in range(max_iters):
 
 # generate text
 context = torch.tensor([[ctoi['\n']]], dtype=torch.long, device=device)
-print(decode(m.generate(context, 500)[0].tolist()))
+print(decode(m.generate(context, 5000)[0].tolist()))
