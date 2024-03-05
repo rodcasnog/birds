@@ -64,6 +64,19 @@ def estimate_loss(model):
         out[split] = losses.mean().item()
     return out
 
+class FeedForward(nn.Module):
+    """Feed-forward network."""
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4*n_embd),
+            nn.ReLU(),
+            nn.Linear(4*n_embd, n_embd),
+            nn.Dropout(dropout)
+        )
+        
+    def forward(self, x):
+        return self.net(x)
 class Head(nn.Module):
     """Self-attention head."""
     def __init__(self, head_size):
@@ -114,20 +127,6 @@ class Block(nn.Module):
         x = x + self.mha(self.ln1(x))
         x = x + self.ff(self.ln2(x))
         return x
-    
-class FeedForward(nn.Module):
-    """Feed-forward network."""
-    def __init__(self, n_embd):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_embd, 4*n_embd),
-            nn.ReLU(),
-            nn.Linear(4*n_embd, n_embd),
-            nn.Dropout(dropout)
-        )
-        
-    def forward(self, x):
-        return self.net(x)
 
 class LanguageModel(nn.Module):
     def __init__(self):
