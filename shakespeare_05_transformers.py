@@ -54,6 +54,7 @@ def get_batch(split):
 # loss
 @torch.no_grad()
 def estimate_loss(model):
+    """Estimate loss."""
     out = {}
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
@@ -74,9 +75,10 @@ class FeedForward(nn.Module):
             nn.Linear(4*n_embd, n_embd),
             nn.Dropout(dropout)
         )
-        
+
     def forward(self, x):
         return self.net(x)
+
 class Head(nn.Module):
     """Self-attention head."""
     def __init__(self, head_size):
@@ -93,7 +95,7 @@ class Head(nn.Module):
         Q = self.query(x)
         V = self.value(x)
         attn = (Q @ K.transpose(-2, -1)) / C**0.5
-        attn = attn.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        attn = attn.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # mask future tokens. Notice how T is variable, so that it can be used for generation with shorter than block_size sequences
         attn = F.softmax(attn, dim=-1)
         attn = self.dropout(attn)
         x = attn @ V
@@ -129,6 +131,7 @@ class Block(nn.Module):
         return x
 
 class LanguageModel(nn.Module):
+    """Language model."""
     def __init__(self):
         super().__init__()
         self.token_embedding = nn.Embedding(vocab_length, n_embd)
@@ -136,7 +139,7 @@ class LanguageModel(nn.Module):
         self.blocks = nn.Sequential(*[Block(n_embd, n_heads=n_heads) for _ in range(n_layers)])
         self.ln_f = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_length)
-        
+
     def forward(self, x, targets=None):
         B, T = x.size()
         tok_embd = self.token_embedding(x)
@@ -150,12 +153,12 @@ class LanguageModel(nn.Module):
             loss = F.cross_entropy(logits.view(-1, vocab_length), targets.view(-1))
             return logits, loss
         return logits, None
-    
+
     def generate(self, idx, max_new_tokens):
         with torch.no_grad():
             for _ in range(max_new_tokens):
-                logits, _ = self(idx[:, -block_size:])
-                logits = logits[:,-1,:]
+                logits, _ = self(idx[:, -block_size:]) # we could infer in parallel for batched generation
+                logits = logits[:,-1,:] # keep only the last token!
                 probs = F.softmax(logits, dim=-1)
                 idx_next = torch.multinomial(probs, num_samples=1)
                 idx = torch.cat([idx, idx_next], dim=1)
